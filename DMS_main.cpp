@@ -1,3 +1,4 @@
+#include "DisplayOverlay.hpp"
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -141,12 +142,6 @@ double calculateMAR(
     double vertical3 = distancePoint(upper3, lower3);
 
     return (vertical1 + vertical2 + vertical3) / (3.0 * horizontal);
-}
-
-std::string toFixedString(double value, int precision = 2) {
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(precision) << value;
-    return oss.str();
 }
 
 void drawPoint(
@@ -314,34 +309,7 @@ int main(int argc, char** argv) {
         double ear = 0.0;
         double mar = 0.0;
 
-        // ================================
-        // 3. 판단 기준값
-        // ================================
-        const double EAR_THRESHOLD = 0.22;
-        const double MAR_THRESHOLD = 0.55;
-
-        std::string eyeState = "UNKNOWN";
-        std::string mouthState = "UNKNOWN";
-        std::string driverState = "NORMAL";
-
-        // 눈 깜빡임 판단용
-        int eyeClosedCount = 0;
-        const int EYE_CLOSED_FRAME_THRESHOLD = 2;
-
-        // 졸음 판단용: 눈 감김이 길게 유지될 때
-        const int DROWSY_EYE_FRAME_THRESHOLD = 15;
-
-        // 하품 판단용: 입 벌림이 길게 유지될 때
-        int mouthOpenCount = 0;
-        const int MOUTH_OPEN_FRAME_THRESHOLD = 10;
-
-        // 눈 깜빡임 빈도 계산용
-        int blinkCount = 0;
-        bool prevEyeClosed = false;
-
-        auto blinkWindowStart = std::chrono::steady_clock::now();
-        const double BLINK_WINDOW_SEC = 10.0;
-        double blinkPerMinute = 0.0;
+        DriverStateDetector state;
 
         while (true) {
             // ================================
@@ -455,97 +423,12 @@ int main(int argc, char** argv) {
                         frameHeight
                     );
 
-                    // ================================
-                    // 눈 상태 판단
-                    // ================================
-                    bool currentEyeClosed = false;
 
-                    if (ear < EAR_THRESHOLD) {
-                        eyeClosedCount++;
-                    }
-                    else {
-                        eyeClosedCount = 0;
-                    }
-
-                    if (eyeClosedCount >= EYE_CLOSED_FRAME_THRESHOLD) {
-                        currentEyeClosed = true;
-                        eyeState = "CLOSED";
-                    }
-                    else {
-                        currentEyeClosed = false;
-                        eyeState = "OPEN";
-                    }
-
-                    // blink count: OPEN → CLOSED로 바뀌는 순간 카운트
-                    if (!prevEyeClosed && currentEyeClosed) {
-                        blinkCount++;
-                    }
-
-                    prevEyeClosed = currentEyeClosed;
-
-                    // ================================
-                    // 입 상태 판단
-                    // ================================
-                    if (mar > MAR_THRESHOLD) {
-                        mouthOpenCount++;
-                        mouthState = "OPEN";
-                    }
-                    else {
-                        mouthOpenCount = 0;
-                        mouthState = "NORMAL";
-                    }
-
-                    // ================================
-                    // Driver 최종 상태 판단
-                    // ================================
-                    bool longEyeClosed =
-                        eyeClosedCount >= DROWSY_EYE_FRAME_THRESHOLD;
-
-                    bool longMouthOpen =
-                        mouthOpenCount >= MOUTH_OPEN_FRAME_THRESHOLD;
-
-                    if (longEyeClosed && longMouthOpen) {
-                        driverState = "DROWSY WARNING";
-                    }
-                    else if (longEyeClosed) {
-                        driverState = "EYE CLOSED";
-                    }
-                    else if (longMouthOpen) {
-                        driverState = "YAWNING";
-                    }
-                    else {
-                        driverState = "NORMAL";
-                    }
                 }
             }
 
-            if (!hasLandmarks) {
-                eyeState = "NO FACE";
-                mouthState = "NO FACE";
-                driverState = "NO FACE";
-
-                eyeClosedCount = 0;
-                mouthOpenCount = 0;
-                prevEyeClosed = false;
-            }
-
-            // ================================
-            // 8. blink frequency 계산
-            // ================================
+            state.update(ear, mar, hasLandmarks);
             auto now = std::chrono::steady_clock::now();
-
-            double blinkWindowElapsed =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - blinkWindowStart
-                ).count() / 1000.0;
-
-            if (blinkWindowElapsed >= BLINK_WINDOW_SEC) {
-                blinkPerMinute =
-                    blinkCount * (60.0 / BLINK_WINDOW_SEC);
-
-                blinkCount = 0;
-                blinkWindowStart = now;
-            }
 
             // ================================
             // 9. FPS 계산
@@ -564,136 +447,7 @@ int main(int argc, char** argv) {
             // ================================
             // 10. 화면 표시
             // ================================
-            cv::putText(
-                outputBgr,
-                "OAK-D + MediaPipe FaceMesh Real-Time",
-                cv::Point(20, 30),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.65,
-                cv::Scalar(0, 255, 255),
-                2
-            );
-
-            cv::putText(
-                outputBgr,
-                "FPS: " + std::to_string(static_cast<int>(fps)),
-                cv::Point(20, 60),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.65,
-                cv::Scalar(255, 255, 0),
-                2
-            );
-
-            cv::putText(
-                outputBgr,
-                "EAR: " + toFixedString(ear, 2) +
-                    "  L: " + toFixedString(leftEAR, 2) +
-                    "  R: " + toFixedString(rightEAR, 2),
-                cv::Point(20, 90),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.55,
-                cv::Scalar(255, 255, 255),
-                2
-            );
-
-            cv::putText(
-                outputBgr,
-                "MAR: " + toFixedString(mar, 2),
-                cv::Point(20, 120),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.55,
-                cv::Scalar(255, 255, 255),
-                2
-            );
-
-            cv::Scalar eyeColor =
-                (eyeState == "CLOSED") ? cv::Scalar(0, 0, 255)
-                                        : cv::Scalar(0, 255, 0);
-
-            if (eyeState == "NO FACE") {
-                eyeColor = cv::Scalar(255, 255, 255);
-            }
-
-            cv::Scalar mouthColor =
-                (mouthState == "OPEN") ? cv::Scalar(0, 0, 255)
-                                        : cv::Scalar(0, 255, 0);
-
-            if (mouthState == "NO FACE") {
-                mouthColor = cv::Scalar(255, 255, 255);
-            }
-
-            cv::putText(
-                outputBgr,
-                "Eye: " + eyeState,
-                cv::Point(20, 150),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.65,
-                eyeColor,
-                2
-            );
-
-            cv::putText(
-                outputBgr,
-                "Mouth: " + mouthState,
-                cv::Point(20, 180),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.65,
-                mouthColor,
-                2
-            );
-
-            cv::putText(
-                outputBgr,
-                "Blink Count: " + std::to_string(blinkCount),
-                cv::Point(20, 210),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.6,
-                cv::Scalar(255, 255, 255),
-                2
-            );
-
-            cv::putText(
-                outputBgr,
-                "Blink/min: " + toFixedString(blinkPerMinute, 1),
-                cv::Point(20, 240),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.6,
-                cv::Scalar(255, 255, 255),
-                2
-            );
-
-            cv::Scalar driverColor;
-
-            if (driverState == "NORMAL") {
-                driverColor = cv::Scalar(0, 255, 0);
-            }
-            else if (driverState == "NO FACE") {
-                driverColor = cv::Scalar(255, 255, 255);
-            }
-            else {
-                driverColor = cv::Scalar(0, 0, 255);
-            }
-
-            cv::putText(
-                outputBgr,
-                "Driver: " + driverState,
-                cv::Point(20, 275),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.7,
-                driverColor,
-                2
-            );
-
-            cv::putText(
-                outputBgr,
-                "EyeClosedCnt: " + std::to_string(eyeClosedCount) +
-                    "  MouthOpenCnt: " + std::to_string(mouthOpenCount),
-                cv::Point(20, 305),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.55,
-                cv::Scalar(255, 255, 255),
-                2
-            );
+            drawOverlay(outputBgr, state, fps, ear, leftEAR, rightEAR, mar);
 
             cv::imshow(
                 "OAK-D Pro MediaPipe FaceMesh EAR MAR Driver State",
